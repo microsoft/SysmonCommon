@@ -1555,7 +1555,7 @@ _In_ PULONG FileIndex
     if( EventHeader == NULL ) {
     	return FALSE;
     }
-    
+
     if( EventType == &SYSMONEVENT_CREATE_PROCESS_Type ) {
 	    *HashType = &EventHeader->m_EventBody.m_ProcessCreateEvent.m_HashType;
 	    *FileIndex = F_CP_Image;
@@ -1570,9 +1570,9 @@ _In_ PULONG FileIndex
     }
 
     if( **HashType == 0 ) {
-	    **HashType = SysmonCryptoCurrent();		// Default is sha256 
+	    **HashType = SysmonCryptoCurrent();		// Default is sha256
     }
-    
+
     return TRUE;
 }
 #endif
@@ -1732,9 +1732,9 @@ EventResolveField(
         if( !LinuxGetHashTypeInformation( EventType, EventHeader, &hashType, &fileIndex ) ) {
 			return ERROR_INVALID_PARAMETER;
 		}
-		
+
 		error = EventResolveField( Time, EventType, EventBuffer, EventHeader, fileIndex, Output, ForceOutputString );
-		
+
 		if( error == ERROR_SUCCESS ) {
 		    LinuxGetFileHash( *hashType, (PTCHAR)EventBuffer[fileIndex].Ptr, tmpStringBuffer, _countof(tmpStringBuffer));
 		}
@@ -2102,6 +2102,7 @@ EventResolveField(
 			//
 			// Translate fields to strings
 			//
+			TCHAR* stringBuff = NULL;
 			switch( currentBuffer->Type ) {
 			case N_ProcessId:
 			case N_Ulong:
@@ -2127,30 +2128,51 @@ EventResolveField(
 
 						_stprintf_s( tmpStringBuffer, _countof(tmpStringBuffer), _T("%u"), *(ULONG*) ptr );
 					}
-					EventDataDescCreateS( &Output[FieldIndex], _tcsdup( tmpStringBuffer ) );
+#if defined __linux__
+					// On Linux, we dupe in the EventDataDescCreate function
+					stringBuff = tmpStringBuffer;
+#else
+					stringBuff = _tcsdup( tmpStringBuffer );
+#endif
+					EventDataDescCreateS( &Output[FieldIndex], stringBuff );
 					EventDataMarkAllocated( &Output[FieldIndex] );
 				}
 				break;
 
 			case N_Ulong64:
                 Ulong64ToString( tmpStringBuffer, _countof(tmpStringBuffer), *(ULONG64*) ptr );
-				EventDataDescCreateS( &Output[FieldIndex], _tcsdup( tmpStringBuffer ) );
+#if defined __linux__
+				// On Linux, we dupe in the EventDataDescCreate function
+				stringBuff = tmpStringBuffer;
+#else
+				stringBuff = _tcsdup( tmpStringBuffer );
+#endif
+				EventDataDescCreateS( &Output[FieldIndex], stringBuff );
 				EventDataMarkAllocated( &Output[FieldIndex] );
 				break;
 
 			case N_LogonId:
                 LogonIdToString( tmpStringBuffer, _countof(tmpStringBuffer), *(ULONG64*) ptr );
-				EventDataDescCreateS( &Output[FieldIndex], _tcsdup( tmpStringBuffer ) );
+#if defined __linux__
+				// On Linux, we dupe in the EventDataDescCreate function
+				stringBuff = tmpStringBuffer;
+#else
+				stringBuff = _tcsdup( tmpStringBuffer );
+#endif
+				EventDataDescCreateS( &Output[FieldIndex], stringBuff );
 				EventDataMarkAllocated( &Output[FieldIndex] );
 				break;
 
 			case N_GUID:
 #if defined _WIN64 || defined _WIN32
 				StringFromGUID2( *(const GUID *)ptr, (LPOLESTR) tmpStringBuffer, _countof(tmpStringBuffer) );
+				stringBuff = _tcsdup( tmpStringBuffer );
 #elif defined __linux__
 				StringFromGUID2( *(const GUID *)ptr, tmpStringBuffer, _countof(tmpStringBuffer) );
+				// On Linux, we dupe in the EventDataDescCreate function
+				stringBuff = tmpStringBuffer;
 #endif
-				EventDataDescCreateS( &Output[FieldIndex], _tcsdup( tmpStringBuffer ) );
+				EventDataDescCreateS( &Output[FieldIndex], stringBuff );
 				EventDataMarkAllocated( &Output[FieldIndex] );
 				break;
 
