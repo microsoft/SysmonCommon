@@ -194,7 +194,7 @@ typedef struct {
 	LUID				m_AuthenticationId;
 	ULONG				m_IsAppContainer;
 	ULONG				m_HashType;
-	PVOID				m_ParentProcessObject;	
+	PVOID				m_ParentProcessObject;
 	PVOID				m_ProcessObject;
 	ULONG				m_Extensions[PROCESS_CREATE_ExtMax];
 } SYSMON_PROCESS_CREATE, *PSYSMON_PROCESS_CREATE;
@@ -440,5 +440,8 @@ typedef struct {
 		SYSMON_REGISTRY_EVENT		m_RegistryEvent;
 		SYSMON_PIPE_EVENT			m_PipeEvent;
 		SYSMON_PROCESS_TAMPERING	m_ProcessTamperingEvent;
+#if defined(__linux__)
+		SYSMON_LINUX_EBPF_EVENT		m_EBPFEvent;
+#endif
 	} m_EventBody;
 } SYSMON_EVENT_HEADER, *PSYSMON_EVENT_HEADER;

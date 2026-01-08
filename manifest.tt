@@ -21,23 +21,23 @@
 	var manDict = new Dictionary<double, XmlNode>();
 	double highest = 0;
 	double highestBinary = 0;
-	
+
 	// Find the highest version manifest
 	foreach (XmlNode m in manifests) {
-	
+
 		if (m.Attributes["schemaversion"] == null || m.Attributes["binaryversion"] == null) {
 			throw new Exception("One manifest entry misses a schemaversion or binaryversion number");
 		}
-		
+
 		var v = double.Parse(m.Attributes["schemaversion"].Value);
 		var b = double.Parse(m.Attributes["binaryversion"].Value);
-		
+
 		if (manDict.ContainsKey(v)) {
 			throw new Exception("Multiple manifest with same schemaversion number");
 		}
-		
+
 		manDict[v] = m;
-		
+
 		if (v > highest) {
 			highest = v;
 		}
@@ -45,11 +45,11 @@
 			highestBinary = b;
 		}
 	}
-	
+
 	var highestBase = Math.Round(highest);
 	if (highestBase > highest) highestBase -= 1.0;
 	XmlNode man = manDict[highest];
-	
+
 	XmlNodeList eventNodes = man.SelectNodes(@".//event");
 	if (type == "header") {
 #>
@@ -203,7 +203,7 @@ typedef struct {
 
 #if <#= i #>
 <#
-		} else { 
+		} else {
 #>
 
 <#
@@ -218,28 +218,39 @@ typedef struct {
 
 		eventIdTableDict[id] = name;
 
+		// Check if this is a Linux-only event that needs its own _EVENT_value define
+		var targetAttr = e.Attributes["target"];
+		bool isLinuxOnly = (targetAttr != null && targetAttr.Value.ToLower() == "linux");
+
 #>
 //
 // <#= name #> event
 //
 <#
+		// For Linux-only events, generate the _EVENT_value macro since it won't be in sysmonmsgop.h
+		if (isLinuxOnly) {
+#>
+#define <#= name #>_EVENT_value <#= id #>
+<#
+		}
+
 		XmlNodeList sub = e.SelectNodes(@".//data");
 		int index = 0;
 		bool timeField = false;
 		foreach(XmlNode s in sub)
 		{
 			var s_name = s.Attributes["name"].Value;
-			
+
 			if (s_name == "UtcTime") {
 				timeField = true;
 			}
-			
+
 #>
 #define <#= String.Format("{0}_{1,-"+(padding - accro.Length).ToString()+"} {2,2} // Type: {3}", accro, s_name, index, GetInType(s)) #>
 <#
 			index++;
 		}
-		
+
 		if (index > maxfields)
 			maxfields = index;
 #>
@@ -285,9 +296,21 @@ ULONG <#= name #>_FieldHashes[] = {
 #>
 };
 
+<#
+		// For Linux-only events, generate the message ID and EVENT_DESCRIPTOR
+		// since these are not in sysmonmsg.h/sysmonmsgop.h
+		if (isLinuxOnly) {
+#>
+// Linux-only event - define message ID and EVENT_DESCRIPTOR locally
+#define <#= name #> ((NTSTATUS)(0x40060000L + 0x<#= String.Format("{0:X}", id) #>))
+static const EVENT_DESCRIPTOR <#= name #>_EVENT = {<#= id #>, 0, 0, 0, 0, 0, 0};
+<#
+		}
+#>
+
 SYSMON_EVENT_TYPE_FMT <#= name #>_Type = {
 	<#= name #>_Count,
-#if !defined(SYSMON_DRIVER)	
+#if !defined(SYSMON_DRIVER)
 	<#= name #>,
 	&<#= name #>_EVENT,
 #else
@@ -332,7 +355,7 @@ SYSMON_EVENT_TYPE_FMT <#= name #>_Type = {
 };
 #endif
 <#
-		
+
 		if (i != "") {
 #>
 #endif
@@ -367,7 +390,7 @@ SYSMON_EVENT_TYPE_FMT* AllEvents[] = {
 	foreach (XmlNode e in eventNodes)
 	{
 		var i = OutputIfDef(e);
-		
+
 		if (i != "") {
 #>
 #if <#= i #>
@@ -376,7 +399,7 @@ SYSMON_EVENT_TYPE_FMT* AllEvents[] = {
 #>
 	&<#= e.Attributes["name"].Value #>_Type,
 <#
-		
+
 		if (i != "") {
 #>
 #endif
@@ -413,7 +436,7 @@ GetDtdFormat(
 	)
 {
 	PTCHAR ConfigurationDtdRule = NULL;
-	
+
 <#
 var items = from pair in manDict orderby pair.Key descending select pair;
 var filterStrs = new List<string>();
@@ -427,7 +450,7 @@ string defaultFilter = "";
 var nodePerRuleName = new Dictionary<string,XmlNode>();
 foreach (XmlNode en in eventNodes) {
 	if (en.Attributes["rulename"] == null) { continue; }
-	
+
 	nodePerRuleName[en.Attributes["rulename"].Value] = en;
 }
 
@@ -456,32 +479,32 @@ foreach (var manEntry in items.Reverse()) {
 foreach (var manEntry in items) {
 	var ver = manEntry.Key;
 	XmlNode m = manEntry.Value;
-	
+
 	if (ver < highest && ver < highestBase) {
 		continue;
 	}
-	
+
 	eventNodes = m.SelectNodes(@".//event");
-	
+
 	//
 	// Check if it is compatible with the base event nodes
 	//
 	foreach (XmlNode en in eventNodes) {
 		if (en.Attributes["rulename"] == null) { continue; }
 		string rn = en.Attributes["rulename"].Value;
-		
+
 		if (!nodePerRuleName.ContainsKey(rn))
 			throw new Exception("Base does not contain rule named: "+rn);
-			
+
 		XmlNode b = nodePerRuleName[rn];
-		
+
 		if (((en.Attributes["ruledefault"] != null) != (b.Attributes["ruledefault"] != null)) ||
 			(en.Attributes["ruledefault"] != null && en.Attributes["ruledefault"].Value != b.Attributes["ruledefault"].Value))
 			throw new Exception("Different rule default for "+rn);
-		
+
 		XmlNodeList b_sub = b.SelectNodes(@".//data");
 		XmlNodeList sub = en.SelectNodes(@".//data");
-		
+
 		/*
 		if (sub.Count > b_sub.Count)
 		{
@@ -490,30 +513,30 @@ foreach (var manEntry in items) {
 			continue;
 		}
 		*/
-		
+
 		int diff = 0;
 		for(int index = 0; index < sub.Count; index++) {
-		
+
 			var sub_item = sub.Item(index);
 			var b_sub_item = b_sub.Item(index-diff);
-		
+
 			if (b_sub_item.Attributes["name"].Value != sub_item.Attributes["name"].Value)
 			{
 				Console.WriteLine("Warning skip check of "+sub_item.Attributes["name"].Value+" due to misalignment");
 				diff += 1;
 				continue;
 			}
-			
+
 			if (sub_item.OuterXml != b_sub_item.OuterXml)
 				throw new Exception("Incompatible rule '"+rn+"' for field '"+sub_item.Attributes["name"].Value+"'");
 		}
 	}
-	
+
 	string cmp = ">=";
 	string elseornot = "} else ";
-	
+
 	if (ver == highest) {
-	
+
 		cmp = "==";
 		elseornot = "";
 	}
@@ -530,7 +553,7 @@ foreach (var manEntry in items) {
 	ruleGroup.children.Add(new DAttr("groupRelation", "(and|or) #REQUIRED"));
 	ruleGroup.children.Add(new DAttr("name", "CDATA #IMPLIED"));
 	eventFilter.children.Add(ruleGroup);
-	
+
 	XmlNodeList optionNodes = m.SelectNodes(@".//option");
 	foreach (XmlNode o in optionNodes)
 	{
@@ -542,7 +565,7 @@ foreach (var manEntry in items) {
 			isRule = true;
 		}
 		string val = "(#PCDATA)";
-		
+
 		//
 		// Identify incompatibility across options
 		//
@@ -557,14 +580,14 @@ foreach (var manEntry in items) {
 		} else {
 			throw new Exception("Unknown argument: "+o.Attributes["argument"].Value);
 		}
-		
+
 		if (configurationOptions.ContainsKey(n)) {
 			if (configurationOptions[n] != co_value)
 				throw new Exception("(1) Invalid configuration change, not supported with current configuration design for: "+n + "option: "+configurationOptions[n] + " val: "+ co_value);
 		} else {
 			configurationOptions[n] = co_value;
 		}
-		
+
 		string co_switch = "";
 		if (o.Attributes["switch"] == null || o.Attributes["switch"].Value == "") {
 			co_switch = "NULL";
@@ -573,59 +596,59 @@ foreach (var manEntry in items) {
 		} else {
 			throw new Exception("Incorrect switch: "+o.Attributes["switch"].Value);
 		}
-		
+
 		if (co_switch != "NULL" && configurationSwitches.ContainsKey(n)) {
 			if (configurationSwitches[n] != co_switch)
 				throw new Exception("(2) Invalid configuration change, not supported with current configuration design for: "+n +" switch:" + co_switch);
 		} else {
 			configurationSwitches[n] = co_switch;
 		}
-		
+
 		string excl = "FALSE";
 		if (o.Attributes["exclusive"] != null && o.Attributes["exclusive"].Value == "true") {
 			excl = "TRUE";
 		}
-		
+
 		if (configurationExclusive.ContainsKey(n)) {
 			if (configurationExclusive[n] != excl)
 				throw new Exception("(3) Invalid configuration change, not supported with current configuration design for: "+n);
 		} else {
 			configurationExclusive[n] = excl;
 		}
-		
+
 		var onrule = "FALSE";
 		if (isRule) {
 			onrule = "TRUE";
 		}
-		
+
 		if (configurationOnRule.ContainsKey(n)) {
 			if (configurationOnRule[n] != onrule)
 				throw new Exception("(4) Invalid configuration change, not supported with current configuration design for: "+n);
 		} else {
 			configurationOnRule[n] = onrule;
 		}
-		
+
 		string cmdlineonly = "FALSE";
 		if (o.Attributes["noconfig"] != null && o.Attributes["noconfig"].Value == "true") {
 			cmdlineonly = "TRUE";
 		}
-		
+
 		if (configurationCmdLineOnly.ContainsKey(n)) {
 			if (configurationCmdLineOnly[n] != cmdlineonly)
 				throw new Exception("(5) Invalid configuration change, not supported with current configuration design for: "+n);
 		} else {
 			configurationCmdLineOnly[n] = cmdlineonly;
 		}
-		
+
 		var i = OutputIfDef(o);
-		
+
 		if (configurationIfDef.ContainsKey(i)) {
 			if (configurationIfDef[n] != i)
 				throw new Exception("(6) Invalid configuration change, not supported with current configuration design for: "+n);
 		} else {
 			configurationIfDef[n] = i;
 		}
-		
+
 		if (cmdlineonly != "TRUE")
 		{
 			if (!isRule)
@@ -646,9 +669,9 @@ foreach (var manEntry in items) {
 	foreach (XmlNode e in eventNodes)
 	{
 		if (e.Attributes["rulename"] == null) { continue; }
-		
+
 		DElement current;
-		
+
 		if (eventFilter.children.Any(item => item.name == e.Attributes["rulename"].Value)) {
 			current = (DElement)eventFilter.children.First(item => item.name == e.Attributes["rulename"].Value);
 		} else {
@@ -656,7 +679,7 @@ foreach (var manEntry in items) {
 			current.children.Add(new DAttr("onmatch", "(include|exclude) #IMPLIED"));
 			current.children.Add(new DAttr("default", "(include|exclude) #IMPLIED"));
 			current.children.Add(ruleType);
-		
+
 			eventFilter.children.Add(current);
 			ruleGroup.children.Add(current);
 		}
@@ -695,7 +718,7 @@ foreach (var manEntry in items) {
 #endif
 <#
 	}
-	
+
 }
 #>
 	} else {
@@ -705,7 +728,7 @@ foreach (var manEntry in items) {
 				  TO_DOUBLE(version), TO_DOUBLE(ConfigurationVersion));
 #endif
 	}
-	
+
 	return ConfigurationDtdRule;
 }
 #endif
@@ -780,18 +803,18 @@ GetFilterOption(
 	)
 {
 	if( value == NULL || *value == 0 ) {
-	
+
 		return <#= ToFitlerName(defaultFilter) #>;
 	}<#
 	foreach (string f in filterStrs) {
 #> else if( 0 == STRCASECMP( value, "<#= f #>" ) ) {
-	
+
 		return <#= ToFitlerName(f) #>;
 	}<#
 	}
 #>
 
-	return Filter_Unknown; 
+	return Filter_Unknown;
 }
 PTCHAR
 GetFilterName(
@@ -816,16 +839,16 @@ GetRuleDefault(
 	)
 {
 	if( value == NULL ) {
-	
+
 		return Rule_Unknown;
 	}
-	
+
 	// It is inverted due to change in configuration files
 	if( 0 == STRCASECMP( value, "include" ) ) {
-	
+
 		return Rule_include;
 	} else if( 0 == STRCASECMP( value, "exclude" ) ) {
-	
+
 		return Rule_exclude;
 	}
 
@@ -851,16 +874,16 @@ GetRuleMatch(
 	)
 {
 	if( value == NULL ) {
-	
+
 		return Rule_Unknown;
 	}
-	
+
 	// It is inverted due to change in configuration files
 	if( 0 == STRCASECMP( value, "exclude" ) ) {
-	
+
 		return Rule_include;
 	} else if( 0 == STRCASECMP( value, "include" ) ) {
-	
+
 		return Rule_exclude;
 	}
 
@@ -893,12 +916,12 @@ filterStrs = filterStrs.Distinct().ToList();
 
 typedef struct _RULE_AGGREGATION
 {
-	WCHAR name[128];						// Optional name. 
+	WCHAR name[128];						// Optional name.
 	ULONG64	messageId;					// Event sequence number. Used for event correlation during rule matching
 	ULONG aggregationId;				// One up correlation ID for matching filter rules
 	ULONG rootRuleOffset;				// Offset for the first filter rule in the chain
 	ULONG nextOffset;					// Offset for next aggreation item in the chain
-	ULONG ruleCount;					// The number of rules in this aggregation	
+	ULONG ruleCount;					// The number of rules in this aggregation
 	RuleCombineType combineType;		// How the rules are combined
 	ULONG rulesChecked;					// used by matching routine to record how many filters have been checked
 	ULONG rulesMatched;					// used by matching routine to record how many filters have been checked
@@ -912,7 +935,7 @@ typedef struct _RULE_FILTER
 	ULONG NextOffset;
 	ULONG DataSize;
 	ULONG AggregationId;				// Aggregation ID if this is part of a <Rule>
-	ULONG AggregationOffset;			// Offset to the RULE_AGGREGATION if this is a <Rule>		
+	ULONG AggregationOffset;			// Offset to the RULE_AGGREGATION if this is a <Rule>
 	UCHAR Data[ANYSIZE_ARRAY];
 } RULE_FILTER, *PRULE_FILTER;
 
@@ -959,11 +982,11 @@ typedef struct _CONFIGURATION_OPTIONS
 	foreach (string k in configurationOptions.Keys)
 	{
 		var i = configurationIfDef[k];
-		
+
 		if (i != "") {
 #>
 #if <#= i #>
-<# 
+<#
 		}
 #>
 	CONFIGURATION_OPTION <#= k #>;
@@ -1011,11 +1034,11 @@ CONFIGURATION_OPTION_TYPE ConfigOptionType[] = {
 	foreach (KeyValuePair<string,string> co in configurationOptions)
 	{
 		var i = configurationIfDef[co.Key];
-		
+
 		if (i != "") {
 #>
 #if <#= i #>
-<# 
+<#
 		}
 #>
 	{ <#= configurationCmdLineOnly[co.Key] #>, <#= configurationExclusive[co.Key] #>, <#= configurationOnRule[co.Key] #>, _T("<#= co.Key #>"), <#= co.Key.Length #>, <#= configurationSwitches[co.Key] #>, <#= co.Value #>, &ConfigOptions.<#= co.Key #> },
@@ -1056,7 +1079,7 @@ SIZE_T ConfigOptionTypeCount = _countof(ConfigOptionType);
 ;//      C - is the Customer code flag
 ;//
 ;//      Facility - is the facility code
-;//	
+;//
 ;//      Code - is the facility's status code
 ;//
 ;
@@ -1074,13 +1097,13 @@ FacilityNames=(System=0x0
                Io=0x4:FACILITY_IO_ERROR_CODE
                Serial=0x6:FACILITY_SERIAL_ERROR_CODE
               )
-<#  
+<#
 	foreach (XmlNode e in eventNodes)
 	{
 		if (Skip(e)) { continue; }
-		
+
 		string sev = e.Attributes["level"].Value;
-		
+
 		int val = (int)new System.ComponentModel.Int32Converter().ConvertFromString(e.Attributes["value"].Value);
 #>
 MessageId=0x<#= String.Format("{0:X}", val) #> Facility=Serial Severity=<#= sev #> SymbolicName=<#= e.Attributes["name"].Value #>
@@ -1100,7 +1123,7 @@ Language=English
 <#
 	}
 } else if( type == "schema" ) {#>
-    <# foreach ( XmlNode schemaMan in manDict.Values ) { 
+    <# foreach ( XmlNode schemaMan in manDict.Values ) {
 		string output = GenerateTargetManifestXml( schemaMan ); #>
 		<#= output #>
 	<# } #>
@@ -1122,11 +1145,11 @@ if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtim
 }
 #>
 				<events>
-<#  
+<#
 	foreach (XmlNode e in eventNodes)
 	{
 		if (Skip(e)) { continue; }
-		
+
 		string name = e.Attributes["name"].Value;
 		int val = (int)new System.ComponentModel.Int32Converter().ConvertFromString(e.Attributes["value"].Value);
 #>
@@ -1138,11 +1161,11 @@ if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtim
 				<levels>
 				</levels>
 				<tasks>
-<#  
+<#
 	foreach (XmlNode e in eventNodes)
 	{
 		if (Skip(e)) { continue; }
-		
+
 		string name = e.Attributes["name"].Value;
 		int val = (int)new System.ComponentModel.Int32Converter().ConvertFromString(e.Attributes["value"].Value);
 #>
@@ -1195,7 +1218,7 @@ if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtim
 		if (Skip(e)) { continue; }
 
 		var task = e.Attributes["template"].Value;
-		
+
 		if (e.Attributes["rulename"] != null) { task += " (rule: "+e.Attributes["rulename"].Value+")"; }
 
 #>
@@ -1215,7 +1238,7 @@ if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtim
 		</resources>
 	</localization>
 </instrumentationManifest>
-<# 
+<#
 }
 #>
 <#+
@@ -1223,22 +1246,22 @@ if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtim
 	public void CopyTargetFilteredDocument( XmlDocument doc, XmlNode dstParent, XmlNode src )
 	{
 		if( src.Attributes == null || !Skip( src )) {
-	
+
 			XmlNode dst = doc.ImportNode( src, false );
 
 			// Remove target attribute
 			if( dst.Attributes != null ) {
 				XmlAttribute targetAttr = dst.Attributes["target"];
 				if( targetAttr != null ) {
-			
+
 					dst.Attributes.Remove(targetAttr);
 				}
 			}
 			dstParent.AppendChild( dst );
 			if( src.HasChildNodes ) {
-			
+
 				foreach (XmlNode child in src.ChildNodes ) {
-				
+
 					CopyTargetFilteredDocument( doc, dst, child );
 				}
 			}
@@ -1248,7 +1271,7 @@ if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtim
 	public string GenerateTargetManifestXml( XmlNode node )
 	{
 		XmlDocument doc = new XmlDocument();
-		
+
 		// Copy the target schema
 		CopyTargetFilteredDocument( doc, doc, node );
 
@@ -1273,23 +1296,23 @@ if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtim
 		if (t != null) {
 			List<string> targets = new List<string>(t.Value.ToLower().Split(','));
 			string version = Host.ResolveParameterValue("", "", "version");
-			
+
 			if (targets.Count > 0 && !targets.Contains("all") && !targets.Contains(version)) {
 				return true;
 			}
 		}
-		
+
 		return false;
 	}
-	
+
 	public string OutputIfDefFromTarget(string target)
 	{
 		string t = target.ToLower();
 		List<string> targets = new List<string>(t.Split(','));
-		
+
 		var val = "";
 		if (!targets.Contains("all")) {
-			
+
 			if (t == "internal")
 				val = "!defined(SYSMON_SHARED) && !defined(SYSMON_PUBLIC)";
 			else if (t == "shared")
@@ -1298,13 +1321,17 @@ if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtim
 				val = "!defined(SYSMON_PUBLIC)";
 			else if (t == "public")
 				val = "defined(SYSMON_PUBLIC)";
-			
+			else if (t == "linux")
+				val = "defined(__linux__)";
+			else if (t == "windows")
+				val = "defined(_WIN64) || defined(_WIN32)";
+
 			if (val == "")
 				throw new Exception("Unknown type: "+target);
 		}
 		return val;
 	}
-	
+
 	public string OutputIfDef(XmlNode e)
 	{
 		var t = e.Attributes["target"];
@@ -1313,15 +1340,15 @@ if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtim
 		}
 		return "";
 	}
-	
+
 	public string GetAcro(XmlNode e)
 	{
 		var startwith = "SYSMONEVENT_";
 		var name = e.Attributes["name"].Value;
-		
+
 		if (!name.StartsWith(startwith))
 			throw new Exception("Incorrect name: "+name);
-		
+
 		name = name.Substring(startwith.Length);
 		List<string> n = new List<string>(name.ToUpper().Split('_'));
 		var ret = "";
@@ -1330,7 +1357,7 @@ if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtim
 		}
 		return "F_"+ret;
 	}
-	
+
 	public string GetInType(XmlNode e)
 	{
 		var s_intype = e.Attributes["inType"].Value;
@@ -1339,7 +1366,7 @@ if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtim
 			s_intype = s_intype.Substring(winstart.Length);
 		return s_intype;
 	}
-	
+
 	public string TransformVersion(double f)
 	{
 		string v = f.ToString("0.00");
@@ -1349,33 +1376,33 @@ if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtim
 		var x = string.Format("0x{0}{1}", a.ToString("X4"), b.ToString("X4"));
 		return x;
 	}
-	
+
 	public string ToFitlerName(string s)
 	{
 		return String.Format("Filter_{0}", s.Replace(" ", "_"));
 	}
-	
+
 	public abstract class DObject
 	{
 		public string name;
 		protected string[] targets;
-		public static string[] possibleTargets = new string[] { "internal", "shared", "public" };
-		
+		public static string[] possibleTargets = new string[] { "linux", "windows", "internal", "shared", "public" };
+
 		public DObject(XmlNode o, string objectName, bool targetRequired=false)
 		{
 			name = objectName;
 			targets = null;
-			
+
 			if (o == null)
 				return;
-			
+
 			var t = o.Attributes["target"];
 			if (t != null) {
 				targets = (new List<string>(t.Value.ToLower().Split(','))).ToArray();
-				
+
 				if (targets.Count() == 0)
 					throw new Exception(String.Format("Empty target on {0}", o));
-					
+
 				foreach (string s in targets)
 				{
 					if (s == "all")
@@ -1383,7 +1410,7 @@ if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtim
 						targets = possibleTargets;
 						break;
 					}
-					
+
 					if (!possibleTargets.Contains(s))
 					{
 						throw new Exception(String.Format("Unknown target {0} for {1}", s, o));
@@ -1395,94 +1422,94 @@ if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtim
 				throw new Exception(String.Format("No target when expected on {0}", o));
 			}
 		}
-		
+
 		public bool IsIncluded(string target)
 		{
 			if (targets == null)
 				return true;
 			return targets.Contains(target);
 		}
-		
+
 		protected string ItemFormat(string element, string name, string data)
 		{
 			return String.Format("<!{0} {1} {2}>", element, name, data);
 		}
-		
+
 		public abstract List<string> GenerateDtd(string target, DObject parent=null);
 	};
-	
+
 	public class DAttr : DObject
 	{
 		string data;
-	
+
 		public DAttr(string attName, string attData, XmlNode o=null) : base(o, attName)
 		{
 			data = attData;
 		}
-		
+
 		public override List<string> GenerateDtd(string target, DObject parent=null)
 		{
 			return new List<string>() { ItemFormat("ATTLIST", parent.name, name+" "+data) };
 		}
 	};
-	
+
 	public class DElement : DObject
 	{
 		string data = null;
 		public List<DObject> children = new List<DObject>();
-		
+
 		public DElement(string elementName, string elementData, XmlNode o=null) : base(o, elementName, true)
 		{
 			name = elementName;
 			data = elementData;
 		}
-		
+
 		public DElement(string elementName, XmlNode o=null) : base(o, elementName, true)
 		{
 		}
-		
+
 		public override List<string> GenerateDtd(string target, DObject parent=null)
 		{
 			if (data != null)
 			{
 				return new List<string>() { ItemFormat("ELEMENT", name, data) };
 			}
-			
+
 			if (children.Count == 0)
 				throw new Exception(String.Format("Element {0} without data or children?", name));
-			
+
 			List<string> elements = new List<string>();
 			List<string> result = new List<string>();
-				
+
 			foreach (DObject o in children)
 			{
 				if (!o.IsIncluded(target))
 					continue;
-					
+
 				if (o is DElement)
 				{
 					elements.Add(o.name);
 				}
-				
+
 				result.AddRange(o.GenerateDtd(target, this));
 			}
-			
+
 			if (elements.Count == 0)
 			{
 				elements.Insert(0, "#PCDATA");
 			}
-			
+
 			result.Insert(0, ItemFormat("ELEMENT", name, String.Format("({0})*", String.Join("|", elements))));
 			return result.Distinct().ToList();
 		}
 	};
-	
+
 	public string FormatDtdTransform(string line, string padding)
 	{
 		line.Replace("\"", "\\\"");
 		return String.Format("{0}_T(\"{1}\")", padding, line.Replace("\"", "\\\""));
 	}
-	
+
 	public string FormatDtd(DElement root, string target, string padding, bool transform=true)
 	{
 		string result = "";
@@ -1491,7 +1518,7 @@ if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtim
 		{
 			if (result != "")
 				result += System.Environment.NewLine;
-				
+
 			if (transform)
 			{
 				result += FormatDtdTransform(line, padding);

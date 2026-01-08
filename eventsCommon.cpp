@@ -3342,6 +3342,128 @@ DWORD DispatchEvent(
 #endif
 
 	default:
+#if defined(__linux__)
+		// Handle Linux-specific event types that are not in the enum
+		if (eventHeader->m_EventType == LinuxEBPFEvent) {
+			PSYSMON_LINUX_EBPF_EVENT ebpfEvent = &eventHeader->m_EventBody.m_EBPFEvent;
+			const char *extPtr = (const char *)(ebpfEvent + 1);
+			TCHAR userBuf[256];
+			const char *bpfCmdStr = "UNKNOWN";
+			const char *bpfProgTypeStr = "UNKNOWN";
+
+			// Get BPF command name (from include/uapi/linux/bpf.h enum bpf_cmd)
+			switch (ebpfEvent->m_BpfCmd) {
+				case 0: bpfCmdStr = "BPF_MAP_CREATE"; break;
+				case 1: bpfCmdStr = "BPF_MAP_LOOKUP_ELEM"; break;
+				case 2: bpfCmdStr = "BPF_MAP_UPDATE_ELEM"; break;
+				case 3: bpfCmdStr = "BPF_MAP_DELETE_ELEM"; break;
+				case 4: bpfCmdStr = "BPF_MAP_GET_NEXT_KEY"; break;
+				case 5: bpfCmdStr = "BPF_PROG_LOAD"; break;
+				case 6: bpfCmdStr = "BPF_OBJ_PIN"; break;
+				case 7: bpfCmdStr = "BPF_OBJ_GET"; break;
+				case 8: bpfCmdStr = "BPF_PROG_ATTACH"; break;
+				case 9: bpfCmdStr = "BPF_PROG_DETACH"; break;
+				case 10: bpfCmdStr = "BPF_PROG_TEST_RUN"; break;
+				case 11: bpfCmdStr = "BPF_PROG_GET_NEXT_ID"; break;
+				case 12: bpfCmdStr = "BPF_MAP_GET_NEXT_ID"; break;
+				case 13: bpfCmdStr = "BPF_PROG_GET_FD_BY_ID"; break;
+				case 14: bpfCmdStr = "BPF_MAP_GET_FD_BY_ID"; break;
+				case 15: bpfCmdStr = "BPF_OBJ_GET_INFO_BY_FD"; break;
+				case 16: bpfCmdStr = "BPF_PROG_QUERY"; break;
+				case 17: bpfCmdStr = "BPF_RAW_TRACEPOINT_OPEN"; break;
+				case 18: bpfCmdStr = "BPF_BTF_LOAD"; break;
+				case 19: bpfCmdStr = "BPF_BTF_GET_FD_BY_ID"; break;
+				case 20: bpfCmdStr = "BPF_TASK_FD_QUERY"; break;
+				case 21: bpfCmdStr = "BPF_MAP_LOOKUP_AND_DELETE_ELEM"; break;
+				case 22: bpfCmdStr = "BPF_MAP_FREEZE"; break;
+				case 23: bpfCmdStr = "BPF_BTF_GET_NEXT_ID"; break;
+				case 24: bpfCmdStr = "BPF_MAP_LOOKUP_BATCH"; break;
+				case 25: bpfCmdStr = "BPF_MAP_LOOKUP_AND_DELETE_BATCH"; break;
+				case 26: bpfCmdStr = "BPF_MAP_UPDATE_BATCH"; break;
+				case 27: bpfCmdStr = "BPF_MAP_DELETE_BATCH"; break;
+				case 28: bpfCmdStr = "BPF_LINK_CREATE"; break;
+				case 29: bpfCmdStr = "BPF_LINK_UPDATE"; break;
+				case 30: bpfCmdStr = "BPF_LINK_GET_FD_BY_ID"; break;
+				case 31: bpfCmdStr = "BPF_LINK_GET_NEXT_ID"; break;
+				case 32: bpfCmdStr = "BPF_ENABLE_STATS"; break;
+				case 33: bpfCmdStr = "BPF_ITER_CREATE"; break;
+				case 34: bpfCmdStr = "BPF_LINK_DETACH"; break;
+				case 35: bpfCmdStr = "BPF_PROG_BIND_MAP"; break;
+				case 36: bpfCmdStr = "BPF_TOKEN_CREATE"; break;
+				case 37: bpfCmdStr = "BPF_PROG_STREAM_READ_BY_FD"; break;
+				default: bpfCmdStr = "UNKNOWN"; break;
+			}
+
+			// Get BPF program type name (from include/uapi/linux/bpf.h enum bpf_prog_type)
+			switch (ebpfEvent->m_ProgType) {
+				case 0: bpfProgTypeStr = "UNSPEC"; break;
+				case 1: bpfProgTypeStr = "SOCKET_FILTER"; break;
+				case 2: bpfProgTypeStr = "KPROBE"; break;
+				case 3: bpfProgTypeStr = "SCHED_CLS"; break;
+				case 4: bpfProgTypeStr = "SCHED_ACT"; break;
+				case 5: bpfProgTypeStr = "TRACEPOINT"; break;
+				case 6: bpfProgTypeStr = "XDP"; break;
+				case 7: bpfProgTypeStr = "PERF_EVENT"; break;
+				case 8: bpfProgTypeStr = "CGROUP_SKB"; break;
+				case 9: bpfProgTypeStr = "CGROUP_SOCK"; break;
+				case 10: bpfProgTypeStr = "LWT_IN"; break;
+				case 11: bpfProgTypeStr = "LWT_OUT"; break;
+				case 12: bpfProgTypeStr = "LWT_XMIT"; break;
+				case 13: bpfProgTypeStr = "SOCK_OPS"; break;
+				case 14: bpfProgTypeStr = "SK_SKB"; break;
+				case 15: bpfProgTypeStr = "CGROUP_DEVICE"; break;
+				case 16: bpfProgTypeStr = "SK_MSG"; break;
+				case 17: bpfProgTypeStr = "RAW_TRACEPOINT"; break;
+				case 18: bpfProgTypeStr = "CGROUP_SOCK_ADDR"; break;
+				case 19: bpfProgTypeStr = "LWT_SEG6LOCAL"; break;
+				case 20: bpfProgTypeStr = "LIRC_MODE2"; break;
+				case 21: bpfProgTypeStr = "SK_REUSEPORT"; break;
+				case 22: bpfProgTypeStr = "FLOW_DISSECTOR"; break;
+				case 23: bpfProgTypeStr = "CGROUP_SYSCTL"; break;
+				case 24: bpfProgTypeStr = "RAW_TRACEPOINT_WRITABLE"; break;
+				case 25: bpfProgTypeStr = "CGROUP_SOCKOPT"; break;
+				case 26: bpfProgTypeStr = "TRACING"; break;
+				case 27: bpfProgTypeStr = "STRUCT_OPS"; break;
+				case 28: bpfProgTypeStr = "EXT"; break;
+				case 29: bpfProgTypeStr = "LSM"; break;
+				case 30: bpfProgTypeStr = "SK_LOOKUP"; break;
+				case 31: bpfProgTypeStr = "SYSCALL"; break;
+				case 32: bpfProgTypeStr = "NETFILTER"; break;
+				default: bpfProgTypeStr = "UNKNOWN"; break;
+			}
+
+			// Get User from SID extension
+			const char *sidPtr = extPtr;
+			extPtr += ebpfEvent->m_Extensions[LINUX_EBPF_Sid];
+			uid_t uid = *(uint32_t *)sidPtr;
+			struct passwd *pw = getpwuid(uid);
+			if (pw) {
+				_sntprintf(userBuf, _countof(userBuf), _T("%s"), pw->pw_name);
+			} else {
+				_sntprintf(userBuf, _countof(userBuf), _T("%d"), uid);
+			}
+
+			// Get Image path
+			const char *imagePath = extPtr;
+			extPtr += ebpfEvent->m_Extensions[LINUX_EBPF_ImagePath];
+
+			// Get Program name
+			const char *progName = extPtr;
+
+			EventSetFieldX( eventBuffer, F_EE_UtcTime, N_LargeTime, ebpfEvent->m_EventTime );
+			EventSetFieldX( eventBuffer, F_EE_ProcessGuid, N_ProcessId, ebpfEvent->m_ProcessId );
+			EventSetFieldX( eventBuffer, F_EE_ProcessId, N_ProcessId, ebpfEvent->m_ProcessId );
+			EventSetFieldS( eventBuffer, F_EE_Image, imagePath, FALSE );
+			EventSetFieldS( eventBuffer, F_EE_User, userBuf, FALSE );
+			EventSetFieldS( eventBuffer, F_EE_BpfCommand, bpfCmdStr, FALSE );
+			EventSetFieldS( eventBuffer, F_EE_BpfProgramType, bpfProgTypeStr, FALSE );
+			EventSetFieldX( eventBuffer, F_EE_BpfProgramId, N_Ulong, ebpfEvent->m_ProgId );
+			EventSetFieldS( eventBuffer, F_EE_BpfProgramName, progName, FALSE );
+
+			EventProcess( &SYSMONEVENT_EBPF_EVENT_Type, eventBuffer, eventHeader, NULL );
+			break;
+		}
+#endif
 		PrintErrorEx( (PTCHAR)_T(__FUNCTION__), 0, (PTCHAR)_T("Unknown event type to forward %d"), eventHeader->m_EventType );
 		error = ERROR_INVALID_DATA;
 	}
