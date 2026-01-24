@@ -6,7 +6,7 @@ If this change would make older configuration files incompatibles (example renam
 Otherwise, just update the minor version (1.0 => 1.01).
 If you have any questions, feel free to ask Mark Russinovich.
 -->
-  <manifest schemaversion="4.91" binaryversion="19">
+  <manifest schemaversion="4.90" binaryversion="18">
     <configuration>
       <options>
         <!-- Command-line only options -->
