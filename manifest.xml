@@ -361,10 +361,10 @@ If you have any questions, feel free to ask Mark Russinovich.
         <data name="ProcessId" inType="win:UInt32" outType="win:PID" />
         <data name="Image" inType="win:UnicodeString" outType="xs:string" />
         <data name="User" inType="win:UnicodeString" outType="xs:string" />
-        <data name="Command" inType="win:UnicodeString" outType="xs:string" />
-        <data name="ProgramType" inType="win:UnicodeString" outType="xs:string" />
-        <data name="ProgramId" inType="win:UInt32" />
-        <data name="ProgramName" inType="win:UnicodeString" outType="xs:string" />
+        <data name="BpfCommand" inType="win:UnicodeString" outType="xs:string" />
+        <data name="BpfProgramType" inType="win:UnicodeString" outType="xs:string" />
+        <data name="BpfProgramId" inType="win:UInt32" />
+        <data name="BpfProgramName" inType="win:UnicodeString" outType="xs:string" />
       </event>
     </events>
   </manifest>
