@@ -30,6 +30,7 @@
 #endif
 #include <string>
 #include <cstring>
+#include <stdexcept>
 #include "sysmonevents.h"
 #include "xml.h"
 #include "rules.h"
@@ -72,7 +73,20 @@ ParseVersionString(
 	//
 	// Normalize the version number
 	//
-	dblVersion = std::stod( version );
+	if( version == NULL || version[0] == '\0' ) {
+
+		return (ULONG)-1;
+	}
+
+	try {
+		dblVersion = std::stod( version );
+	} catch( const std::invalid_argument& ) {
+
+		return (ULONG)-1;
+	} catch( const std::out_of_range& ) {
+
+		return (ULONG)-1;
+	}
 	snprintf( tmp, _countof( tmp ), "%.2f", dblVersion );
 
 	acc = ret = 0;
