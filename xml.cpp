@@ -1357,7 +1357,7 @@ ApplyConfigurationFile(
 				}
 
 				const char* nodeContent = curNode.child_value();
-				if( !nodeContent || !nodeContent[0] ) {
+				if( !nodeContent ) {
 					break;
 				}
 
