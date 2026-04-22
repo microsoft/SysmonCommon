@@ -25,6 +25,7 @@
 #include "stdafx.h"
 #include <pugixml.hpp>
 #include <climits>
+#include <cctype>
 #if defined _WIN64 || defined _WIN32
 #include <atlbase.h>
 #endif
