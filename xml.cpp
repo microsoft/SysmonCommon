@@ -1397,9 +1397,9 @@ ApplyConfigurationFile(
 						continue;
 					}
 
-					if( !strcmp( nodeContentCopy, "true" ) &&
-						!strcmp( nodeContentCopy, "1" ) &&
-						!strcmp( nodeContentCopy, "enabled" ) ) {
+					if( strcmp( nodeContentCopy, "true" ) &&
+						strcmp( nodeContentCopy, "1" ) &&
+						strcmp( nodeContentCopy, "enabled" ) ) {
 
 						printf( "Error: Incorrect value '%s' for node", nodeContentCopy );
 						_tprintf( _T( " '%s'\n" ), option->FieldName );
