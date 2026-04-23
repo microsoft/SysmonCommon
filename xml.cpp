@@ -23,14 +23,15 @@
 //====================================================================
 
 #include "stdafx.h"
-#include <libxml/parser.h>
-#include <libxml/tree.h>
-#include <libxml/xpath.h>
-#include <libxml/xpathInternals.h>
+#include <pugixml.hpp>
+#include <climits>
+#include <cctype>
 #if defined _WIN64 || defined _WIN32
 #include <atlbase.h>
 #endif
 #include <string>
+#include <cstring>
+#include <stdexcept>
 #include "sysmonevents.h"
 #include "xml.h"
 #include "rules.h"
@@ -73,7 +74,20 @@ ParseVersionString(
 	//
 	// Normalize the version number
 	//
-	dblVersion = std::stod( version );
+	if( version == NULL || version[0] == '\0' ) {
+
+		return (ULONG)-1;
+	}
+
+	try {
+		dblVersion = std::stod( version );
+	} catch( const std::invalid_argument& ) {
+
+		return (ULONG)-1;
+	} catch( const std::out_of_range& ) {
+
+		return (ULONG)-1;
+	}
 	snprintf( tmp, _countof( tmp ), "%.2f", dblVersion );
 
 	acc = ret = 0;
@@ -746,7 +760,7 @@ GetFileContentWithDtd8(
 
 			firstRead = FALSE;
 
-			if( !xmlStrncasecmp( (xmlChar*)startPos, (xmlChar*)xmlTag, (int)strlen( xmlTag ) ) ) {
+			if( !strncasecmp( startPos, xmlTag, strlen( xmlTag ) ) ) {
 
 				endPos = strstr( startPos + strlen( xmlTag ), endTag );
 
@@ -786,19 +800,11 @@ FetchConfigurationVersion(
 	_Out_ BOOLEAN* HasBOM
 )
 {
-	xmlDoc*					doc = NULL;
-	xmlNode*				sysmonNode = NULL;
-	xmlXPathContextPtr		xpathCtx;
-	xmlChar					xmlSysmonQuery[] = "/Sysmon[1]";
-	xmlXPathObjectPtr		xpathObj;
-	xmlChar*				versionString = NULL;
 	ULONG					version = 0;
 
-	PCHAR					fileEncoding = NULL;
 	UCHAR					sniff[1024];
 	FILE*					sniff_f = NULL;
 	size_t					sniff_read = 0;
-	CHAR					utf16le_str[] = "UTF-16LE";
 
 	*XMLEncoding = NULL;
 	*Is16Bit = false;
@@ -866,7 +872,6 @@ FetchConfigurationVersion(
 	} else {
 
 		if( sniff[1] == 0x00 ) {
-			fileEncoding = utf16le_str;
 			*Is16Bit = true;
 		} else {
 
@@ -875,55 +880,54 @@ FetchConfigurationVersion(
 	}
 
 	//
-	// read file with detected file encoding if there was no BOM
+	// read file with pugixml, using detected encoding
 	//
 
-	doc = xmlReadFile( fileName, fileEncoding, 0 );
-	if( !doc ) {
+	pugi::xml_document doc;
+	pugi::xml_encoding pugEncoding = pugi::encoding_auto;
+	if( *Is16Bit && !*HasBOM ) {
+		// UTF-16 LE without BOM needs explicit encoding hint
+		pugEncoding = pugi::encoding_utf16_le;
+	}
+	pugi::xml_parse_result parseResult = doc.load_file( fileName, pugi::parse_default | pugi::parse_declaration, pugEncoding );
+	if( !parseResult ) {
 
-		_tprintf( _T( "Error: Failed to load xml configuration: %s (could not read file)\n" ),
-					  FileName );
+		_tprintf( _T( "Error: Failed to load or parse xml configuration: %s (%hs at offset %td)\n" ),
+					  FileName,
+					  parseResult.description(),
+					  parseResult.offset );
 		return FALSE;
 	}
 
-	xpathCtx = xmlXPathNewContext( doc );
-	if( !xpathCtx ) {
+	pugi::xpath_node sysmonXpathNode = doc.select_node( "/Sysmon" );
+	if( !sysmonXpathNode ) {
 
 		_tprintf( _T( "Error: Failed to find Sysmon tag in configuration: %s\n" ), FileName );
-		xmlFreeDoc( doc );
 		return FALSE;
 	}
 
-	xpathObj = xmlXPathEvalExpression( xmlSysmonQuery, xpathCtx );
-	if( !xpathObj || !xpathObj->nodesetval || xpathObj->nodesetval->nodeNr < 1 ) {
-
-		_tprintf( _T( "Error: Failed to find Sysmon tag in configuration: %s\n" ), FileName );
-		if (xpathObj != NULL) {
-			xmlXPathFreeObject( xpathObj );
-		}
-		xmlXPathFreeContext( xpathCtx );
-		xmlFreeDoc( doc );
-		return FALSE;
-	}
-
-	xmlXPathFreeContext( xpathCtx );
-
-	sysmonNode = xpathObj->nodesetval->nodeTab[0];
-	versionString = xmlGetProp( sysmonNode, (xmlChar *)"schemaversion" );
+	pugi::xml_node sysmonNode = sysmonXpathNode.node();
+	const char* versionString = sysmonNode.attribute( "schemaversion" ).value();
 
 	//
 	// If an <?xml> tag is present and specifies an encoding, then store this to use when reading
 	// the file with the DTD.
 	//
-	if( doc->encoding ) {
-
-		*XMLEncoding = _strdup( (PCHAR)doc->encoding );
+	pugi::xml_node decl = doc.first_child();
+	if( decl.type() == pugi::node_declaration ) {
+		const char* enc = decl.attribute("encoding").value();
+		if( enc && enc[0] ) {
+			*XMLEncoding = _strdup( enc );
+		} else if( *Is16Bit && !*HasBOM ) {
+			*XMLEncoding = _strdup( "UTF-16LE" );
+		} else {
+			*XMLEncoding = NULL;
+		}
+	} else if( *Is16Bit && !*HasBOM ) {
+		*XMLEncoding = _strdup( "UTF-16LE" );
 	} else {
-
 		*XMLEncoding = NULL;
 	}
-	xmlFreeDoc( doc );
-	xmlXPathFreeObject ( xpathObj );
 
 	version = ParseVersionString( (PCHAR)versionString );
 	if( version == (ULONG)-1 ) {
@@ -935,13 +939,11 @@ FetchConfigurationVersion(
 			*XMLEncoding = NULL;
 		}
 
-		xmlFree ( versionString );
 		return FALSE;
 	}
 
 	*Version = version;
 
-	xmlFree ( versionString );
 	return TRUE;
 }
 
@@ -1067,21 +1069,6 @@ GetFieldIndex(
 	}
 
 	return (WORD)-1;
-}
-
-//--------------------------------------------------------------------
-//
-// libxml2Error
-//
-// Reporting function for libxml2 validation errors
-//
-//--------------------------------------------------------------------
-void XMLCDECL libxml2Error( void* ctx, const char* format, ... )
-{
-	va_list args;
-	va_start( args, format );
-	vprintf( format, args );
-	va_end( args );
 }
 
 //--------------------------------------------------------------------
@@ -1234,14 +1221,10 @@ ApplyConfigurationFile(
 #elif defined __linux__
 	const char*						fileName = FileName;
 #endif
-	xmlDoc*							xmlDoc = NULL;
-	xmlValidCtxt*					xmlValidCtx = NULL;
-	xmlXPathContextPtr				xpathCtx = NULL;
-	xmlXPathObjectPtr				xpathObj = NULL;
-	xmlNode*						curNode = NULL;
-	xmlChar							xmlSysmonQuery[] = "/Sysmon[1]";
+	pugi::xml_document				pugiDoc;
+	pugi::xml_node					curNode;
+	char							xmlEventQuery[256];
 	SIZE_T							index;
-	xmlChar							xmlEventQuery[256];
 	char*							xmlEncoding = NULL;
 	BOOLEAN							is16bit = false;
 	BOOLEAN							hasBOM = false;
@@ -1292,7 +1275,7 @@ ApplyConfigurationFile(
 #if defined _WIN64 || defined _WIN32
 		convertedChars = WideCharToMultiByte( CP_UTF8, WC_ERR_INVALID_CHARS, FileName, -1, fileName, sizeof(fileName), NULL, NULL );
 		if (convertedChars == 0 ) {
-			_tprintf( _T( "LIBXML2 Error: Failed to convert xml configuration filename: %s\n" ), FileName );
+			_tprintf( _T( "Error: Failed to convert xml configuration filename: %s\n" ), FileName );
 			return FALSE;
 		}
 		fileName[sizeof(fileName)-1] = 0x00;
@@ -1317,14 +1300,15 @@ ApplyConfigurationFile(
 				return FALSE;
 			}
 
-#if 0
-			DBG_MODE_VERBOSE( _tprintf( _T( "[DBG] XML:\n%s\n\n" ), data.c_str() ) )
-#endif
-
 			//
-			// Load the document with libxml2
+			// Load the document with pugixml
 			//
-			xmlDoc = xmlReadMemory( (char*)data.c_str(), dataLen, fileName, "UTF-16LE", 0 );
+			pugi::xml_parse_result parseResult = pugiDoc.load_buffer( data.c_str(), dataLen, pugi::parse_default, pugi::encoding_utf16_le );
+			if( !parseResult ) {
+				if( xmlEncoding ) { free( xmlEncoding ); xmlEncoding = NULL; }
+				_tprintf( _T( "Error: Failed to load xml configuration: %s\n" ), FileName );
+				return FALSE;
+			}
 
 		} else {
 
@@ -1339,120 +1323,88 @@ ApplyConfigurationFile(
 				return FALSE;
 			}
 
-#if 0
-			DBG_MODE_VERBOSE( printf( "[DBG] XML:\n%s\n\n", data.c_str() ) )
-#endif
-
 			//
-			// Load the document with libxml2
+			// Load the document with pugixml
 			//
-			xmlDoc = xmlReadMemory( (char*)data.c_str(), (int)data.size(), fileName, xmlEncoding, 0 );
+			pugi::xml_encoding bufEncoding = pugi::encoding_auto;
+			if( xmlEncoding && !strcasecmp( xmlEncoding, "ISO-8859-1" ) ) {
+				bufEncoding = pugi::encoding_latin1;
+			}
+			pugi::xml_parse_result parseResult = pugiDoc.load_buffer( data.c_str(), data.size(), pugi::parse_default, bufEncoding );
+			if( !parseResult ) {
+				if( xmlEncoding ) { free( xmlEncoding ); xmlEncoding = NULL; }
+				_tprintf( _T( "Error: Failed to load xml configuration: %s\n" ), FileName );
+				return FALSE;
+			}
 
 		}
-
-		if( xmlDoc == NULL ) {
-			if( xmlEncoding ) { free( xmlEncoding ); xmlEncoding = NULL; }
-			_tprintf( _T( "LIBXML2 Error: Failed to load xml configuration: %s\n" ), FileName );
-			return FALSE;
-		}
-
-		//
-		// Validate the file based on the dtd
-		//
-		xmlValidCtx = xmlNewValidCtxt();
-		if( !xmlValidCtx ) {
-			printf( "LIBXML2 Error: Failed to create libxml2 validation context\n" );
-			xmlFreeDoc( xmlDoc );
-			if( xmlEncoding ) { free( xmlEncoding ); xmlEncoding = NULL; }
-			return FALSE;
-		}
-
-		xmlValidCtx->error = libxml2Error;
-		xmlValidCtx->warning = libxml2Error;
-		if( !xmlValidateDocument( xmlValidCtx, xmlDoc ) ) {
-			_tprintf( _T( "LIBXML2 Error: Failed to validate the xml configuration: %s\n" ), FileName );
-			xmlFreeValidCtxt( xmlValidCtx );
-			xmlFreeDoc( xmlDoc );
-			if( xmlEncoding ) { free( xmlEncoding ); xmlEncoding = NULL; }
-			return FALSE;
-		}
-
-		xmlFreeValidCtxt( xmlValidCtx );
 
 		//
 		// Handle configuration
 		//
-		xpathCtx = xmlXPathNewContext( xmlDoc );
-		if( !xpathCtx ) {
-			_tprintf( _T( "Error: Failed to find Sysmon tag in configuration: %s\n" ), FileName );
-			xmlFreeDoc( xmlDoc );
-			if( xmlEncoding ) { free( xmlEncoding ); xmlEncoding = NULL; }
-			return FALSE;
-		}
-
-		xpathObj = xmlXPathEvalExpression( xmlSysmonQuery, xpathCtx );
-		if( !xpathObj || !xpathObj->nodesetval || xpathObj->nodesetval->nodeNr < 1 ) {
+		pugi::xpath_node sysmonXpathNode = pugiDoc.select_node( "/Sysmon" );
+		if( !sysmonXpathNode ) {
 			_tprintf( _T( "Error: Failed to find configuration node: %s\n" ), FileName );
-			if ( xpathObj != NULL ) {
-				xmlXPathFreeObject( xpathObj );
-			}
-			xmlXPathFreeContext( xpathCtx );
-			xmlFreeDoc( xmlDoc );
 			if( xmlEncoding ) { free( xmlEncoding ); xmlEncoding = NULL; }
 			return FALSE;
 		}
 
-		for( curNode = xpathObj->nodesetval->nodeTab[0]->children; curNode; curNode = curNode->next )
+		for( curNode = sysmonXpathNode.node().first_child(); curNode; curNode = curNode.next_sibling() )
 		{
-			if( curNode->type == XML_ELEMENT_NODE ) {
-				if( !strcmp( (char*)curNode->name, "EventFiltering" ) ) {
+			if( curNode.type() == pugi::node_element ) {
+				if( !strcmp( curNode.name(), "EventFiltering" ) ) {
 					continue;
 				}
 
-				char* nodeContent;
-				nodeContent = (char*)xmlNodeListGetString( xmlDoc, curNode->xmlChildrenNode, 1 );
+				const char* nodeContent = curNode.child_value();
 				if( !nodeContent ) {
 					break;
 				}
 
+				// Make a mutable copy for option processing
+				char* nodeContentCopy = _strdup( nodeContent );
+				if( !nodeContentCopy ) {
+					break;
+				}
+
 #if defined _WIN64 || defined _WIN32
-				CA2T nodeContent_t( nodeContent, CP_UTF8 );
-				CA2T nodeName( (const char *)curNode->name, CP_UTF8 );
+				CA2T nodeContent_t( nodeContentCopy, CP_UTF8 );
+				CA2T nodeName( curNode.name(), CP_UTF8 );
 #elif defined __linux__
-				PTCHAR nodeContent_t = nodeContent;
-				PTCHAR nodeName = (char *)curNode->name;
+				PTCHAR nodeContent_t = nodeContentCopy;
+				PTCHAR nodeName = (char *)curNode.name();
 #endif
 
 				option = FindConfigurationOption( nodeName );
 
 				if( option == NULL ) {
 
-					xmlFree( nodeContent );
+					free( nodeContentCopy );
 					break;
 				}
 
-				if( option->ValueFlag == ConfigNoValue && nodeContent[0] != 0 ) {
+				if( option->ValueFlag == ConfigNoValue && nodeContentCopy[0] != 0 ) {
 
 					//
 					// This element is disabled
 					//
-					if( !strcmp( nodeContent, "false" ) ||
-						!strcmp( nodeContent, "0" ) ||
-						!strcmp( nodeContent, "NULL" ) ||
-						!strcmp( nodeContent, "disabled" ) ) {
+					if( !strcmp( nodeContentCopy, "false" ) ||
+						!strcmp( nodeContentCopy, "0" ) ||
+						!strcmp( nodeContentCopy, "NULL" ) ||
+						!strcmp( nodeContentCopy, "disabled" ) ) {
 
-						xmlFree( nodeContent );
+						free( nodeContentCopy );
 						continue;
 					}
 
-					if( !strcmp( nodeContent, "true" ) &&
-						!strcmp( nodeContent, "1" ) &&
-						!strcmp( nodeContent, "enabled" ) ) {
+					if( strcmp( nodeContentCopy, "true" ) &&
+						strcmp( nodeContentCopy, "1" ) &&
+						strcmp( nodeContentCopy, "enabled" ) ) {
 
-						printf( "Error: Incorrect value '%s' for node", nodeContent );
+						printf( "Error: Incorrect value '%s' for node", nodeContentCopy );
 						_tprintf( _T( " '%s'\n" ), option->FieldName );
 
-						xmlFree( nodeContent );
+						free( nodeContentCopy );
 						break;
 					}
 
@@ -1480,27 +1432,22 @@ ApplyConfigurationFile(
 
 				option->Option->IsSet = TRUE;
 
-				if( nodeContent[0] != 0 ) {
+				if( nodeContentCopy[0] != 0 ) {
 
 					option->Option->Value = _tcsdup( nodeContent_t );
 
 					if( option->Option->Value == NULL ) {
 
-						xmlFree( nodeContent );
+						free( nodeContentCopy );
 						break;
 					}
 
 					option->Option->Size = (ULONG)(_tcslen( (PTCHAR)option->Option->Value ) + 1) * sizeof( TCHAR );
 					option->Option->ValueAllocated = TRUE;
 				}
-				xmlFree( nodeContent );
+				free( nodeContentCopy );
 
 			}
-		}
-
-		if ( xpathObj ) {
-			xmlXPathFreeObject ( xpathObj );
-			xpathObj = NULL;  // This variable is used later in the function so re-initialize it
 		}
 
 		if( !GetAdditionalRules( addRules, _countof( addRules ) ) ) {
@@ -1541,26 +1488,19 @@ ApplyConfigurationFile(
 				// Force the for loop to jump over the series of duplicates.
 				index = indexLastOfSeries - 1;
 
-                if( !CreateEventFilteringQuery( (char*)xmlEventQuery, sizeof( xmlEventQuery ), rule->RuleName ) ) {
+                if( !CreateEventFilteringQuery( xmlEventQuery, sizeof( xmlEventQuery ), rule->RuleName ) ) {
                     continue;
                 }
 
-				if ( xpathObj ) {
-					xmlXPathFreeObject ( xpathObj );
-				}
-				xpathObj = xmlXPathEvalExpression( xmlEventQuery, xpathCtx );
-				if( !xpathObj || !xpathObj->nodesetval || xpathObj->nodesetval->nodeNr < 0 ) {
-					printf( "Error: Failed to find event node: %s\n", (char*)xmlEventQuery );
-					if ( xpathObj != NULL ) {
-						xmlXPathFreeObject( xpathObj );
-						xpathObj = NULL;
-					}
+				pugi::xpath_node_set xpathNodes;
+				try {
+					xpathNodes = pugiDoc.select_nodes( xmlEventQuery );
+				} catch( const pugi::xpath_exception& ) {
+					printf( "Error: Failed to find event node: %s\n", xmlEventQuery );
 					continue;
 				}
 
-				if( xpathObj->nodesetval->nodeNr == 0 ) {
-					xmlXPathFreeObject( xpathObj );
-					xpathObj = NULL;
+				if( xpathNodes.size() == 0 ) {
 					continue;
 				}
 
@@ -1574,7 +1514,7 @@ ApplyConfigurationFile(
 #endif
 
 				bool isValidXml = true;
-				for( int nodeIndex = 0; isValidXml && nodeIndex < xpathObj->nodesetval->nodeNr; nodeIndex++ ) {
+				for( size_t nodeIndex = 0; isValidXml && nodeIndex < xpathNodes.size(); nodeIndex++ ) {
 
 					bool ruleFromSeriesFound = false;
 					for( SIZE_T ruleIndex = indexFirstOfSeries; !ruleFromSeriesFound && ruleIndex < indexLastOfSeries; ruleIndex++ ) {
@@ -1582,9 +1522,9 @@ ApplyConfigurationFile(
 						ruleFromSeriesFound = true;
 
 						rule = AllEvents[ruleIndex];
-						curNode = xpathObj->nodesetval->nodeTab[nodeIndex];
+						pugi::xml_node curEvtNode = xpathNodes[nodeIndex].node();
 
-						xmlChar* groupRuleName = NULL;
+						const char* groupRuleName = NULL;
 
 						RuleCombineType ruleCombineType = TO_DOUBLE( version ) > 4.1
 							? RuleCombineAND
@@ -1593,63 +1533,54 @@ ApplyConfigurationFile(
 						// #397. For AND/OR logic we added an optional RuleGroup node. If no rule groups are used we default to OR for backwards compatibility on 4.1 and earlier
 						// If a rule group is defined but no groupRelation is specified then we default to AND as per the documentation.
 
-						if( 0 == xmlStrcasecmp( curNode->parent->name, (xmlChar*)"RuleGroup" ) ) {
-							xmlChar* combineType = NULL;
+						if( 0 == strcasecmp( curEvtNode.parent().name(), "RuleGroup" ) ) {
+							const char* combineType = curEvtNode.parent().attribute( "groupRelation" ).value();
+							if( combineType && combineType[0] ) {
 
-							combineType = xmlGetProp( curNode->parent, (xmlChar*)"groupRelation" );
-							if( combineType ) {
-
-								if( 0 == xmlStrcasecmp( combineType, (xmlChar*)"or" ) ) {
+								if( 0 == strcasecmp( combineType, "or" ) ) {
 
 									ruleCombineType = RuleCombineOR;
 								} else {
 									// should be validated by the schema
-									D_ASSERT( 0 == xmlStrcasecmp( combineType, (xmlChar*)"and" ) );
+									D_ASSERT( 0 == strcasecmp( combineType, "and" ) );
 									ruleCombineType = RuleCombineAND;
 								}
-
-								xmlFree( combineType );
 							}
-							groupRuleName = xmlGetProp( curNode->parent, (xmlChar*)"name" );
+							groupRuleName = curEvtNode.parent().attribute( "name" ).value();
+							if( groupRuleName && !groupRuleName[0] ) groupRuleName = NULL;
 						}
 
 						RuleDefaultType ruleDef;
 
-						xmlChar* ruleMatch = NULL;
-						xmlChar* ruleDefault = NULL;
-						ruleMatch = xmlGetProp( curNode, (xmlChar*)"onmatch" );
-						ruleDefault = xmlGetProp( curNode, (xmlChar*)"default" );
+						const char* ruleMatch = curEvtNode.attribute( "onmatch" ).value();
+						const char* ruleDefault = curEvtNode.attribute( "default" ).value();
+						bool hasRuleMatch = !curEvtNode.attribute( "onmatch" ).empty();
+						bool hasRuleDefault = !curEvtNode.attribute( "default" ).empty();
 
-						if( !ruleMatch ) {
+						if( !hasRuleMatch ) {
 
 							//
 							// Check default field
 							//
-							if( !ruleDefault ) {
+							if( !hasRuleDefault ) {
 								_tprintf( _T( "Error: You need to specifiy the onmatch attribute on %s.\n" ), rule->RuleName );
 								break;
 							} else {
 
-								ruleDef = GetRuleDefault( (const char *)ruleDefault );
+								ruleDef = GetRuleDefault( ruleDefault );
 							}
 						} else {
 
 							//
 							// Check there is no default field
 							//
-							if( ruleDefault ) {
+							if( hasRuleDefault ) {
 
 								_tprintf( _T( "Error: Can't specify onmatch and default on %s (pick only one)\n" ), rule->RuleName );
 								break;
 							}
 
-							ruleDef = GetRuleMatch( (const char *)ruleMatch );
-
-							xmlFree( ruleMatch );
-						}
-
-						if( ruleDefault != NULL ) {
-							xmlFree( ruleDefault );
+							ruleDef = GetRuleMatch( ruleMatch );
 						}
 
 						if( ruleDef == Rule_Unknown ) {
@@ -1741,40 +1672,37 @@ ApplyConfigurationFile(
 						}
 
 						//
-						// curNode is the Event level node (ie ProcessCreate). Each child item is either
+						// curEvtNode is the Event level node (ie ProcessCreate). Each child item is either
 						// a rule or a <rule> element.
 						// Iterate over all children of event node.
 						//
-						xmlNode* sub;
-						for( sub = curNode->children; isValidXml && ruleFromSeriesFound && sub; sub = sub->next ) {
+						pugi::xml_node sub;
+						for( sub = curEvtNode.first_child(); isValidXml && ruleFromSeriesFound && sub; sub = sub.next_sibling() ) {
 
-							if( sub->type == XML_ELEMENT_NODE ) { // only interested in elements, not comments or whitespace
+							if( sub.type() == pugi::node_element ) { // only interested in elements, not comments or whitespace
 
 								PRULE_FILTER ruleFilter;
 								bool isAggregation = FALSE;
-								xmlNode* currentRule = sub;
-								xmlChar* curRuleName = groupRuleName;
+								pugi::xml_node currentRule = sub;
+								const char* curRuleName = groupRuleName;
 
-								if( 0 == xmlStrcasecmp( currentRule->name, (xmlChar*)"rule" ) ) {
+								if( 0 == strcasecmp( currentRule.name(), "rule" ) ) {
 
-									xmlChar* combineType;
 									RuleCombineType aggregateCombineType = RuleCombineDefault;
 
-									combineType = xmlGetProp( sub, (xmlChar*)"groupRelation" );
+									const char* combineType = sub.attribute( "groupRelation" ).value();
 
-									if( combineType ) {
+									if( combineType && combineType[0] ) {
 
-										if( 0 == xmlStrcasecmp( combineType, (xmlChar*)"or" ) ) {
+										if( 0 == strcasecmp( combineType, "or" ) ) {
 
 											aggregateCombineType = RuleCombineOR;
 										} else {
 
 											// should be validated by the schema
-											D_ASSERT( 0 == xmlStrcasecmp( combineType, (xmlChar*)"and" ) );
+											D_ASSERT( 0 == strcasecmp( combineType, "and" ) );
 											aggregateCombineType = RuleCombineAND;
 										}
-
-										xmlFree( combineType );
 									}
 
 									RULE_AGGREGATION aggregation;
@@ -1783,14 +1711,12 @@ ApplyConfigurationFile(
 									aggregation.combineType = aggregateCombineType;
 
 									// Rule may contain an optional name attribute
-									xmlChar* ruleName;
-
-									ruleName = xmlGetProp( currentRule, (xmlChar*)"name" );
-									if( ruleName ) {
+									const char* ruleName = currentRule.attribute( "name" ).value();
+									if( ruleName && ruleName[0] ) {
 										// Replace rulegroup for aggregate name.
 										curRuleName = ruleName;
 #if defined _WIN64 || defined _WIN32
-										MultiByteToWideChar( CP_UTF8, 0, (char*)ruleName, -1,
+										MultiByteToWideChar( CP_UTF8, 0, ruleName, -1,
 												aggregation.name, _countof( aggregation.name ) );
 										aggregation.name[_countof( aggregation.name )-1] = 0x00;
 #elif defined __linux__
@@ -1809,17 +1735,18 @@ ApplyConfigurationFile(
 								// the following loop once) or rule aggregations that are bound via the <rule> tag, in which case
 								// we iterate over the children of the rule node.
 								//
-								xmlNode* subsub = currentRule;
-								if( 0 == xmlStrcasecmp( currentRule->name, (xmlChar*)"rule" ) ) {
-									subsub = currentRule->children;
+								pugi::xml_node subsub = currentRule;
+								bool isRuleNode = (0 == strcasecmp( currentRule.name(), "rule" ));
+								if( isRuleNode ) {
+									subsub = currentRule.first_child();
 								}
 
-								do {
-									if( subsub->type == XML_ELEMENT_NODE ) { // only interested in elements
+								while( subsub ) {
+									if( subsub.type() == pugi::node_element ) { // only interested in elements
 #if defined _WIN64 || defined _WIN32
-										CA2T subName( (char*)subsub->name, CP_UTF8 );
+										CA2T subName( subsub.name(), CP_UTF8 );
 #elif defined __linux__
-										PTCHAR subName = (PTCHAR)subsub->name;
+										PTCHAR subName = (PTCHAR)subsub.name();
 #endif
 										ULONG fieldId = GetFieldIndex( rule, subName );
 
@@ -1831,8 +1758,8 @@ ApplyConfigurationFile(
 											break;
 										}
 
-										xmlChar* ruleNameP = xmlGetProp( subsub, (xmlChar*)"name" );
-										xmlChar* ruleName = ruleNameP;
+										const char* ruleNameP = subsub.attribute( "name" ).value();
+										const char* ruleName = (ruleNameP && ruleNameP[0]) ? ruleNameP : NULL;
 
 										// If no name was explicit on the field, use the sub-rule or rulegroup name.
 										if( ruleName == nullptr ) {
@@ -1841,58 +1768,45 @@ ApplyConfigurationFile(
 										}
 
 										if( ruleName != nullptr &&
-											strlen( (char*)ruleName ) >  _countof( ruleFilter->Name ) - 1 ) {
+											strlen( ruleName ) >  _countof( ruleFilter->Name ) - 1 ) {
 
-											printf( "Error: Rule name is larger than 255 characters: %s\n", (char*)ruleName );
+											printf( "Error: Rule name is larger than 255 characters: %s\n", ruleName );
 											hr = E_INVALIDARG;
-											xmlFree( ruleNameP );
 											break;
 										}
 
-										xmlChar* attrCondValue;
-										attrCondValue = xmlGetProp( subsub, (xmlChar*)"condition" );
+										const char* attrCondValue = subsub.attribute( "condition" ).value();
+										const char* attrCondPtr = (!subsub.attribute( "condition" ).empty()) ? attrCondValue : NULL;
 
-										FilterOption foption = GetFilterOption( (const char *)attrCondValue );
+										FilterOption foption = GetFilterOption( attrCondPtr );
 
 										if( foption == Filter_Unknown ) {
 
-											printf( "Error: Unknown condition: %s\n", (char*)attrCondValue );
+											printf( "Error: Unknown condition: %s\n", attrCondValue );
 											_tprintf( _T( "Expected values are " ) SYSMON_FILTER_CONDITIONS );
 											hr = E_INVALIDARG;
-                                            xmlFree( attrCondValue );
-											xmlFree( ruleNameP );
 											break;
 										}
 
-										if( attrCondValue != NULL ) {
-											xmlFree( attrCondValue );
-										}
-
-										xmlChar emptyBuffer[] = "";
-										xmlChar* subValueChar = xmlNodeListGetString( xmlDoc, subsub->xmlChildrenNode, 1 );
+										const char* subValueChar = subsub.child_value();
 										if( subValueChar == nullptr ) {
-											subValueChar = emptyBuffer;
+											subValueChar = "";
 										}
 #if defined _WIN64 || defined _WIN32
-										CA2T subValue( (char*)subValueChar, CP_UTF8 );
+										CA2T subValue( subValueChar, CP_UTF8 );
 										ULONG dataSize = ((ULONG)_tcslen( subValue ) + 1) * sizeof( TCHAR );
 #elif defined __linux__
-										ULONG numDataChars = (ULONG)strlen( (PCHAR)subValueChar ) + 1;
+										ULONG numDataChars = (ULONG)strlen( subValueChar ) + 1;
 										WCHAR subValue[numDataChars];
 										UTF8toUTF16( subValue, (PCHAR)subValueChar, numDataChars );
 										ULONG dataSize = ((ULONG)WideStrlen( subValue ) + 1) * sizeof( WCHAR );
 #endif
-
-										if( subValueChar != emptyBuffer ) {
-											xmlFree( subValueChar );
-										}
 
 										ULONG allocSize = sizeof( RULE_FILTER ) + dataSize;
 										ruleFilter = (PRULE_FILTER)malloc( allocSize );
 
 										if( ruleFilter == NULL ) {
 
-											xmlFree( ruleNameP );
 											hr = E_OUTOFMEMORY;
 											D_ASSERT( SUCCEEDED( hr ) );
 											break;
@@ -1905,15 +1819,12 @@ ApplyConfigurationFile(
 
 										if( ruleName ) {
 #if defined _WIN64 || defined _WIN32
-											CA2T ruleName_t( (char*)ruleName, CP_UTF8 );
+											CA2T ruleName_t( ruleName, CP_UTF8 );
 											_tcscpy( ruleFilter->Name, ruleName_t );
 #elif defined __linux__
 											UTF8toUTF16( ruleFilter->Name, (PCHAR)ruleName,
 													sizeof( ruleFilter->Name ) / sizeof( *(ruleFilter->Name) ) );
 #endif
-										}
-										if( ruleNameP != NULL ) {
-											xmlFree( ruleNameP );
 										}
 
 										memcpy( ruleFilter->Data, subValue, dataSize - sizeof( WCHAR ) );
@@ -1932,12 +1843,12 @@ ApplyConfigurationFile(
 									// If this is a child of a rule node, then iterate to next sibling.
 									// Otherwise make this loop a one-shot.
 									//
-									if( 0 == xmlStrcasecmp( currentRule->name, (xmlChar*)"rule" ) ) {
-										subsub = subsub->next;
+									if( isRuleNode ) {
+										subsub = subsub.next_sibling();
 									} else {
-										subsub = NULL;
+										subsub = pugi::xml_node();
 									}
-								} while( subsub );
+								}
 
 								if( FAILED( hr ) ) {
 
@@ -1946,9 +1857,6 @@ ApplyConfigurationFile(
 									return FALSE;
 								}
 							}
-						}
-						if( groupRuleName != NULL ) {
-							xmlFree( groupRuleName );
 						}
 					}
 					if( !ruleFromSeriesFound ) {
@@ -1964,11 +1872,7 @@ ApplyConfigurationFile(
 			}
 		}
 
-		if ( xpathObj ) {
-			xmlXPathFreeObject ( xpathObj );
-		}
-		xmlXPathFreeContext( xpathCtx );
-		xmlFreeDoc( xmlDoc );
+		// pugixml documents are cleaned up automatically via RAII
 	} else {
 
 		if( !GetAdditionalRules( addRules, _countof(addRules) ) ) {

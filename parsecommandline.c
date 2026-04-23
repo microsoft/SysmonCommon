@@ -24,9 +24,9 @@
 #include "rules.h"
 #include "sysmonevents.h"
 #include "xml.h"
-#include <libxml/parser.h>
 #include <sys/types.h>
 #include <string.h>
+#include <limits.h>
 #include "printfFormat.h"
 
 #if defined __linux__
