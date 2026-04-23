@@ -892,7 +892,7 @@ FetchConfigurationVersion(
 	pugi::xml_parse_result parseResult = doc.load_file( fileName, pugi::parse_default | pugi::parse_declaration, pugEncoding );
 	if( !parseResult ) {
 
-		_tprintf( _T( "Error: Failed to load or parse xml configuration: %s (%hs at offset %td)\n" ),
+		_tprintf( _T( "Error: Failed to load or parse xml configuration: %s (%s at offset %td)\n" ),
 					  FileName,
 					  parseResult.description(),
 					  parseResult.offset );
